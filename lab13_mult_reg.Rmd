@@ -1,0 +1,209 @@
+---
+title: "Multiple Regression, Variable Selection"
+output:
+  pdf_document:
+    fig_height: 2.8
+    fig_width: 6
+  html_document:
+    fig_height: 3
+    fig_width: 5
+  word_document:
+    fig_height: 3
+    fig_width: 5
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{vwcol}
+geometry: margin=0.5in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE)
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(gridExtra)
+library(GGally)
+options(width = 100)
+```
+
+## Case Study 12-02 from Sleuth 3: Sex Discrimination in Employment
+
+Here's the description from the book: "Data on employees from one job category (skilled, entry–level clerical) of a bank that was sued for sex discrimination. The data are on 32 male and 61 female employees, hired between 1965 and 1975."
+
+We have the following variables:
+
+ * Bsal: Annual salary at time of hire
+ * Sex: Sex of employee
+ * Senior: Seniority (months since first hired)
+ * Age: Age of employee (in months)
+ * Educ: Education (in years)
+ * Exper: Work experience prior to employment with the bank (months)
+
+One of the claims in the court case was that women were paid a lower starting salary than men of comparable experience and education when they were first hired.  Our response variable in this analysis will be Bsal.
+
+The code below loads the data:
+
+```{r, echo = FALSE, message = FALSE}
+discrim <- Sleuth3::case1202 %>%
+  select(Sex, Senior, Age, Educ, Exper, Bsal)
+head(discrim)
+```
+
+We will follow the following outline for our analysis:
+
+1. Make initial plots
+2. Do our best to identify necessary data transformations from the plots
+3. Fit a model including all variables
+4. Look at residuals plots from that model; tweak data transformations or add non-linear terms to the model if necessary
+5. Consider outliers.  Do outliers seem to be affecting inferences?
+6. Select variables to include in a final model.  These should definitely include `Sex` since that variable is related to the primary purpose of our analysis.
+7. Fit final model(s) and double check residuals one more time.
+8. Summarize our findings across all combination of models with and without outliers (if necessary) and with various sets of explanatory variables (if necessary).
+
+### 1. Make a pairs plot of the data
+
+```{r}
+ggpairs(discrim)
+```
+
+### 2. See if you can identify transformations to address any problems you can see in the pairs plots.  Note: the model is much more interpretable if you can justify not transforming the response (i.e., transforming the response variable is only worth it if you don't trust the model othewise, not to fix minor problems).
+
+```{r}
+discrim_transformed <- discrim %>% mutate(Age = sqrt(Age), Exper = sqrt(Exper))
+ggpairs(discrim_transformed)
+```
+
+### 3. Fit a model including all explanatory variables and create plots of the residuals vs explanatory variables
+
+```{r}
+lm_fit <- lm(Bsal ~ Sex + Senior + Age + Educ + Exper, data = discrim_transformed)
+discrim_transformed <- discrim_transformed %>%
+  mutate(
+    resid = residuals(lm_fit)
+  )
+p1 <- ggplot(data = discrim_transformed, mapping = aes(x = Senior, y = resid)) +
+  geom_point()
+p2 <- ggplot(data = discrim_transformed, mapping = aes(x = Age, y = resid)) +
+  geom_point()
+p3 <- ggplot(data = discrim_transformed, mapping = aes(x = Educ, y = resid)) +
+  geom_point()
+p4 <- ggplot(data = discrim_transformed, mapping = aes(x = Exper, y = resid)) +
+  geom_point()
+grid.arrange(p1, p2, p3, p4)
+```
+
+### 4. Tweak data transformations or add non-linear terms to the model if necessary
+
+```{r}
+lm_fit <- lm(Bsal ~ Sex + Senior + Age + I(Age^2) + Educ + Exper + I(Exper^2), data = discrim_transformed)
+discrim_transformed <- discrim_transformed %>%
+  mutate(
+    resid = residuals(lm_fit)
+  )
+p1 <- ggplot(data = discrim_transformed, mapping = aes(x = Senior, y = resid)) +
+  geom_point()
+p2 <- ggplot(data = discrim_transformed, mapping = aes(x = Age, y = resid)) +
+  geom_point()
+p3 <- ggplot(data = discrim_transformed, mapping = aes(x = Educ, y = resid)) +
+  geom_point()
+p4 <- ggplot(data = discrim_transformed, mapping = aes(x = Exper, y = resid)) +
+  geom_point()
+grid.arrange(p1, p2, p3, p4)
+```
+
+### 5. Consider outliers.  Do outliers seem to be affecting inferences?
+
+```{r}
+discrim_transformed <- discrim_transformed %>%
+  mutate(
+    obs_index = row_number(),
+    h = hatvalues(lm_fit),
+    studres = rstudent(lm_fit),
+    D = cooks.distance(lm_fit)
+  )
+
+ggplot(data = discrim_transformed, mapping = aes(x = obs_index, y = h)) +
+  geom_hline(yintercept = 2 * 8 / nrow(discrim_transformed))+
+  geom_point()
+
+ggplot(data = discrim_transformed, mapping = aes(x = obs_index, y = studres)) +
+  geom_point()
+
+ggplot(data = discrim_transformed, mapping = aes(x = obs_index, y = D)) +
+  geom_point()
+
+discrim_transformed %>%
+  filter(h >  2 * 6 / nrow(discrim_transformed))
+
+discrim_transformed <- discrim_transformed %>%
+  mutate(suspicious = (h >  2 * 6 / nrow(discrim_transformed)))
+
+ggpairs(discrim_transformed, mapping = aes(color = suspicious), columns = 2:5)
+```
+
+```{r}
+discrim_no_suspicious <- discrim_transformed %>%
+  filter(!suspicious)
+
+lm_fit2 <- lm(Bsal ~ Sex + Senior + Age + I(Age^2) + Educ + Exper + I(Exper^2), data = discrim_no_suspicious)
+summary(lm_fit)
+summary(lm_fit2)
+
+discrim_no_suspicious <- discrim_no_suspicious %>%
+  mutate(
+    resid = residuals(lm_fit2)
+  )
+p1 <- ggplot(data = discrim_no_suspicious, mapping = aes(x = Senior, y = resid)) +
+  geom_point()
+p2 <- ggplot(data = discrim_no_suspicious, mapping = aes(x = Age, y = resid)) +
+  geom_point()
+p3 <- ggplot(data = discrim_no_suspicious, mapping = aes(x = Educ, y = resid)) +
+  geom_point()
+p4 <- ggplot(data = discrim_no_suspicious, mapping = aes(x = Exper, y = resid)) +
+  geom_point()
+grid.arrange(p1, p2, p3, p4)
+```
+
+### 6. Select variables to include in a final model.  These should definitely include `Sex` since that variable is related to the primary purpose of our analysis.
+
+```{r}
+library(leaps)
+candidate_models <- regsubsets(Bsal ~ Sex + Senior + Age + I(Age^2) + Educ + Exper + I(Exper^2), data = discrim_transformed)
+plot(candidate_models)
+```
+
+I will include all the variables above other than Age and Age squared.
+
+### 7. Fit final model(s) and double check residuals one more time.
+
+```{r}
+lm_fit <- lm(Bsal ~ Sex + Senior + Educ + Exper + I(Exper^2), data = discrim_transformed)
+discrim_transformed <- discrim_transformed %>%
+  mutate(
+    resid = residuals(lm_fit)
+  )
+p1 <- ggplot(data = discrim_transformed, mapping = aes(x = Senior, y = resid)) +
+  geom_point()
+p2 <- ggplot(data = discrim_transformed, mapping = aes(x = Age, y = resid)) +
+  geom_point()
+p3 <- ggplot(data = discrim_transformed, mapping = aes(x = Educ, y = resid)) +
+  geom_point()
+p4 <- ggplot(data = discrim_transformed, mapping = aes(x = Exper, y = resid)) +
+  geom_point()
+grid.arrange(p1, p2, p3, p4)
+
+lm_fit2 <- lm(Bsal ~ Sex + Senior + Educ + Exper + I(Exper^2), data = discrim_no_suspicious)
+summary(lm_fit)
+summary(lm_fit2)
+```
+
+Overall, things look pretty good.  There is increasing standard deviation of residuals for higher education levels.  It seems unlikely we could fix that, but also unlikely that that is going to affect our inferences substantially enough to change our conclusions.
+
+### 8. Summarize our findings across all combination of models with and without outliers (if necessary) and with various sets of explanatory variables (if necessary).  Focus on the estimated coefficient for sex.  It's always nice to get confidence intervals for effects you want to describe.
+
+```{r}
+confint(lm_fit)
+confint(lm_fit2)
+```
+
+There is extremely strong evidence that men were paid higher base salaries than women, after accounting for seniority, education level, and experience.  We estimate that the difference in population mean starting salaries between men and women starting at this bank between 1965 and 1975 is approximately $730, with a 95% confidence interval ranging from about $500 to about $950.  These estimates were fairly stable whether or not several outlying or high leverage observations were included.
